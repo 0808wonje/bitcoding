@@ -16,11 +16,10 @@ def normalize_text(text):
     text = re.sub(r'\s+', ' ', text).strip()  # 공백 정리
     return text.replace('제안이유 및 주요내용', '').replace('제안이유', '') # 불필요한 단어 제외
 
-# 검색한 문서 결과를 Rerank 이후 하나의 문단으로 병합
-# reordering = LongContextReorder()
-# def format_docs(docs):
-#     reordered_docs = reordering.transform_documents(docs)
-#     return "\n\n".join(doc.page_content for doc in reordered_docs)
+reordering = LongContextReorder()
+def reordering_format_docs(docs):
+    reordered_docs = reordering.transform_documents(docs)
+    return "\n\n".join(doc.page_content for doc in reordered_docs)
 
 def format_docs(docs):
     return "\n\n".join(doc.page_content for doc in docs)
@@ -98,7 +97,7 @@ from app.llms import gpt
 from app.prompt import custom_bill_qna_prompt_v1
 
 hybrid_chain = (
-    {"context": hybrid_search | format_docs, "question": RunnablePassthrough()}
+    {"context": hybrid_search | reordering_format_docs, "question": RunnablePassthrough()}
     | custom_bill_qna_prompt_v1
     | gpt
     | StrOutputParser()
