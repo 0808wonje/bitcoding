@@ -17,10 +17,13 @@ def normalize_text(text):
     return text.replace('제안이유 및 주요내용', '').replace('제안이유', '') # 불필요한 단어 제외
 
 # 검색한 문서 결과를 Rerank 이후 하나의 문단으로 병합
-reordering = LongContextReorder()
+# reordering = LongContextReorder()
+# def format_docs(docs):
+#     reordered_docs = reordering.transform_documents(docs)
+#     return "\n\n".join(doc.page_content for doc in reordered_docs)
+
 def format_docs(docs):
-    reordered_docs = reordering.transform_documents(docs)
-    return "\n\n".join(doc.page_content for doc in reordered_docs)
+    return "\n\n".join(doc.page_content for doc in docs)
 
 
 # ############### Load ###############
@@ -76,7 +79,7 @@ if not ps.get_total_vector_count():
 
 pinecone_retriever = ps.vectorstore.as_retriever(
     search_type="similarity_score_threshold",
-    search_kwargs={'k': 10, 'score_threshold': 0.8},
+    search_kwargs={'k': 10, 'score_threshold': 0.75},
 )
 
 bm25_retriever = BM25Retriever.from_documents(
@@ -86,17 +89,17 @@ bm25_retriever = BM25Retriever.from_documents(
 
 hybrid_search = EnsembleRetriever(
     retrievers=[bm25_retriever, pinecone_retriever],
-    weights=[0.3, 0.7],
+    weights=[0.2, 0.8],
 )
 
 
 ############### Prompt and Chain ###############
 from app.llms import gpt
-from app.prompt import custom_bill_qna_prompt
+from app.prompt import custom_bill_qna_prompt_v1
 
 hybrid_chain = (
     {"context": hybrid_search | format_docs, "question": RunnablePassthrough()}
-    | custom_bill_qna_prompt
+    | custom_bill_qna_prompt_v1
     | gpt
     | StrOutputParser()
 )

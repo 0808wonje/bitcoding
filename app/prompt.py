@@ -25,8 +25,11 @@ bill_qna_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
-custom_bill_qna_prompt = hub.pull("rlm/rag-prompt")
-custom_bill_qna_prompt.messages[0].prompt.template = bill_qna_template.custom_bill_qna_template
+
+custom_bill_qna_prompt_v1 = PromptTemplate.from_template(bill_qna_template.custom_bill_qna_template_v1)
+
+custom_bill_qna_prompt_v2 = hub.pull("rlm/rag-prompt")
+custom_bill_qna_prompt_v2.messages[0].prompt.template = bill_qna_template.custom_bill_qna_template_v2
 
 google_search_tool_prompt = hub.pull("hwchase17/openai-functions-agent")
 google_search_tool_prompt.messages[0].prompt.template = external_search_template.external_search_template
