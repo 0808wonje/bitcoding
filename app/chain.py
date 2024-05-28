@@ -12,7 +12,5 @@ bill_summary_chain = prompt.bill_summary_prompt | llms.gpt | output_parser
 
 bill_children_summary_chain = prompt.bill_children_summary_prompt | llms.gpt | output_parser
 
-filtering_chain = prompt.filtering_prompt | llms.gpt | output_parser
-
 # qna_chain = prompt.qna_prompt | llms.gpt | output_parser
 

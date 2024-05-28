@@ -1,6 +1,7 @@
 from pinecone import Pinecone, ServerlessSpec
 from langchain_pinecone import PineconeVectorStore
 from langchain.chains import RetrievalQA  
+# from langchain.vectorstores import Pinecone
 
 
 class PineconeService:
@@ -12,6 +13,7 @@ class PineconeService:
         self.index = self.pc.Index(host=self.host, name=self.index_name)
         self.embeddings = embeddings
         self.vectorstore = PineconeVectorStore(index_name=index_name, namespace=namespace, embedding=embeddings)
+        # self.vectorstore = Pinecone.from_existing_index(index_name=index_name, embedding=embeddings)
         
     def get_total_vector_count(self) -> int:
         return self.index.describe_index_stats()['total_vector_count']

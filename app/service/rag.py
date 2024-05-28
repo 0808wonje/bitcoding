@@ -2,27 +2,35 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import JSONLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain.retrievers import EnsembleRetriever
+from langchain.retrievers import EnsembleRetriever, ParentDocumentRetriever, ContextualCompressionRetriever
 from langchain_community.retrievers import BM25Retriever
 from langchain_community.document_transformers import LongContextReorder
-import os
-import re
+from langchain.storage import InMemoryStore
+import os, re
 from app.util import json_utils
+from langchain.retrievers.multi_query import MultiQueryRetriever
+from app.llms import gpt
+from app.prompt import custom_bill_qna_prompt_v1, multiquery_prompt
+from langchain.retrievers.self_query.base import SelfQueryRetriever
+from langchain.chains.query_constructor.base import AttributeInfo
+from langchain.retrievers.document_compressors import CrossEncoderReranker
+from langchain_community.cross_encoders import HuggingFaceCrossEncoder
+from langchain_community.vectorstores import Chroma
 
 
 # 텍스트 전처리
-def normalize_text(text):
+def normalize_text(text: str, metadata: dict):
     text = re.sub(r'[^\w\s]', '', text)  # 문장 부호 제거
     text = re.sub(r'\s+', ' ', text).strip()  # 공백 정리
+    proposer = metadata['proposer']
+    date = metadata['propose_date']
+    text += f'\n[tag] 법안을 발의한 사람:, {proposer}, 제안일, {date}'
     return text.replace('제안이유 및 주요내용', '').replace('제안이유', '') # 불필요한 단어 제외
 
 reordering = LongContextReorder()
 def reordering_format_docs(docs):
     reordered_docs = reordering.transform_documents(docs)
     return "\n\n".join(doc.page_content for doc in reordered_docs)
-
-def format_docs(docs):
-    return "\n\n".join(doc.page_content for doc in docs)
 
 
 # ############### Load ###############
@@ -37,7 +45,8 @@ docs = loader.load()
 print(f"문서의 수: {len(docs)}")
 
 for i in docs:
-    normalized_text = normalize_text(i.page_content)
+    normalized_text = normalize_text(i.page_content, i.metadata)
+    i.page_content = normalized_text
     
 
 # ############### Split ###############
@@ -54,6 +63,7 @@ text_splitter = RecursiveCharacterTextSplitter(
 
 splits = text_splitter.split_documents(docs)
 print('split_length =', len(splits)) 
+# print(splits[1000:1011])
 
 
 # ############### Embed and Store ###############
@@ -71,6 +81,7 @@ ps = pinecone_service.PineconeService(
     namespace=namespace,
     embeddings=embeddings
 )
+# ps.delete_all_vector()
 
 if not ps.get_total_vector_count():
     print('add_documents')
@@ -83,21 +94,73 @@ pinecone_retriever = ps.vectorstore.as_retriever(
 
 bm25_retriever = BM25Retriever.from_documents(
     documents=splits,
-    k=5,
+    k=10,
 )
 
-hybrid_search = EnsembleRetriever(
-    retrievers=[bm25_retriever, pinecone_retriever],
-    weights=[0.2, 0.8],
+multiquery_retriever = MultiQueryRetriever.from_llm(
+    retriever=pinecone_retriever,
+    llm=gpt,
+    prompt=multiquery_prompt
+)
+
+parent_document_retriever = ParentDocumentRetriever(
+    vectorstore=ps.vectorstore,
+    docstore=InMemoryStore(),
+    child_splitter=RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50),
+    search_kwargs={"k": 10}
+)
+# parent_document_retriever.add_documents(
+#     documents=docs,
+#     ids=None
+# )
+
+document_content_description = "법안의 제안 이유 및 주요 내용입니다."
+metadata_field_info = [
+    AttributeInfo(
+        name="proposer",
+        description="법안을 발의한 의원입니다.",
+        type="string",
+    ),
+    AttributeInfo(
+        name="propose_date",
+        description="법안이 발의된 날짜입니다.",
+        type="integer",
+    )
+]
+self_query_retriever = SelfQueryRetriever.from_llm(
+    llm=gpt,
+    vectorstore=Chroma.from_documents(documents=splits, embedding=embeddings),
+    document_contents=document_content_description,
+    metadata_field_info=metadata_field_info,
+    search_kwargs={"k": 10}
 )
 
 
+hybrid_retriever = EnsembleRetriever(
+    retrievers=[
+        bm25_retriever, 
+        pinecone_retriever, 
+        multiquery_retriever, 
+        parent_document_retriever, 
+        self_query_retriever
+        ],
+    weights=[
+        0.2, 
+        0.2, 
+        0.2, 
+        0.2,
+        0.2
+        ],
+)
+
+model = HuggingFaceCrossEncoder(model_name="BAAI/bge-reranker-base")
+compressor = CrossEncoderReranker(model=model, top_n=10)
+compression_retriever = ContextualCompressionRetriever(
+    base_compressor=compressor, base_retriever=hybrid_retriever
+)
 ############### Prompt and Chain ###############
-from app.llms import gpt
-from app.prompt import custom_bill_qna_prompt_v1
-
 hybrid_chain = (
-    {"context": hybrid_search | reordering_format_docs, "question": RunnablePassthrough()}
+    {"context": compression_retriever | reordering_format_docs, "question": RunnablePassthrough()}
     | custom_bill_qna_prompt_v1
     | gpt
     | StrOutputParser()

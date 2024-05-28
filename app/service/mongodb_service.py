@@ -31,7 +31,7 @@ class MongodbService():
     
     async def aget_top_ten_json(self, lst):
         tasks = []
-        for e in lst:
+        for e in lst[:11]:
             tasks.append(asyncio.create_task(self.afind_by_id(e.metadata['_id']))) 
         result = await asyncio.gather(*tasks)
         return result
